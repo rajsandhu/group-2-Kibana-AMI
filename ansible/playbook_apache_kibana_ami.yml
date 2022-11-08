@@ -1,0 +1,80 @@
+- name: provision image with apache and kibana
+  hosts: default
+  become: true
+  vars:
+    kibana_deb_file: kibana-8.4.2-amd64.deb
+
+  # 1. use the Apache server as your proxy server,
+  # allowing the Kibana Dashboard to be viewed on Port 80
+  tasks:
+  - name: Install Apache
+    apt:
+      update_cache: true
+      name: apache2
+      state: latest
+
+  - name: Create apache configuration file
+    copy:
+      dest: "/etc/apache2/sites-available/domain.conf"
+      content: |
+        <VirtualHost *:80>
+        ServerName localhost
+        ProxyRequests Off
+        ProxyPreserveHost On
+        ProxyVia Full
+        <Proxy *>
+        Require all granted
+        </Proxy>
+        ProxyPass / http://127.0.0.1:5601/
+        ProxyPassReverse / http://127.0.0.1:5601/
+        </VirtualHost>
+
+  - name: Run the below commands so that apache works as proxy server
+    shell: 'sudo a2dissite 000-default'
+    args:
+      executable: /bin/bash
+    become_method: sudo
+
+  - name: Run more services
+    shell: 'sudo a2enmod proxy proxy_http rewrite headers expires'
+    args:
+      executable: /bin/bash
+    become_method: sudo
+
+  - name: Restart service with domain.conf
+    shell: 'sudo a2ensite domain.conf'
+
+  - name: Restart the apache2 service
+    service:
+      name: apache2
+      state: restarted
+
+  # 2. tasks file for install-kibana
+  - name: Download kibana file
+    get_url:
+      dest: "/etc/{{ kibana_deb_file }}"
+      url: "https://artifacts.elastic.co/downloads/kibana/{{ kibana_deb_file }}"
+      checksum: "sha512:https://artifacts.elastic.co/downloads/kibana/{{ kibana_deb_file }}.sha512"
+    become: yes
+  - name: Install kibana from deb file
+    apt:
+      deb: "/etc/{{ kibana_deb_file }}"
+      update_cache: yes
+    become: yes
+
+  - name: Send kibana config file
+    template:
+      src: kibana.yml.j2
+      dest: "/etc/kibana/kibana.yml"
+      remote_src: false
+    become: yes
+
+  - name: Restart the kibana service
+    shell: 'systemctl start kibana'
+    args:
+      executable: /bin/bash
+
+  - name: Enable the kibana service
+    shell: 'systemctl enable kibana'
+    args:
+      executable: /bin/bash
